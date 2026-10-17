@@ -1,8 +1,15 @@
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+val stableKeystoreFile = file("rasidi-release.jks")
+val stableStorePassword = System.getenv("RASIDI_KEYSTORE_PASSWORD")
+val stableKeyAlias = System.getenv("RASIDI_KEY_ALIAS")
+val stableKeyPassword = System.getenv("RASIDI_KEY_PASSWORD")
+
 android {
     namespace = "com.rasidi.smart"
     compileSdk = 35
@@ -11,8 +18,30 @@ android {
         applicationId = "com.rasidi.smart"
         minSdk = 23
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
+    }
+
+    signingConfigs {
+        create("stable") {
+            storeFile = stableKeystoreFile
+            storePassword = stableStorePassword
+            keyAlias = stableKeyAlias
+            keyPassword = stableKeyPassword
+        }
+    }
+
+    buildTypes {
+        getByName("debug") {
+            if (
+                stableKeystoreFile.exists() &&
+                !stableStorePassword.isNullOrBlank() &&
+                !stableKeyAlias.isNullOrBlank() &&
+                !stableKeyPassword.isNullOrBlank()
+            ) {
+                signingConfig = signingConfigs.getByName("stable")
+            }
+        }
     }
 
     buildFeatures {
