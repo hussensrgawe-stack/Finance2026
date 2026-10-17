@@ -17,8 +17,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -39,6 +37,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import org.json.JSONArray
 import org.json.JSONObject
@@ -63,6 +62,12 @@ private const val TRANSACTIONS_KEY = "saved_transactions"
 
 private val currencies = listOf("SYP", "USD")
 private val accounts = listOf("نقدي", "شام كاش")
+
+private val incomeColor = Color(0xFF16803D)
+private val expenseColor = Color(0xFFD32F2F)
+
+private fun transactionColor(type: String): Color =
+    if (type == "مصروف") expenseColor else incomeColor
 
 private fun dateFormat(): SimpleDateFormat =
     SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
@@ -225,10 +230,8 @@ private fun RasidiApp() {
     ) { uri ->
         if (uri != null) {
             try {
-                val startValue = currentReportStart
-                val endValue = currentReportEnd
-                val startParsed = parseDate(startValue)
-                val endParsed = parseDate(endValue)
+                val startParsed = parseDate(currentReportStart)
+                val endParsed = parseDate(currentReportEnd)
 
                 if (startParsed == null || endParsed == null || endParsed < startParsed) {
                     exportMessage = "تحقق من تاريخ البداية والنهاية قبل التصدير."
@@ -246,30 +249,29 @@ private fun RasidiApp() {
                         transaction.currency == currentReportCurrency
                 }.sortedBy { it.timestamp }
 
-                context.contentResolver.openOutputStream(uri)?.use { output ->
-                    OutputStreamWriter(output, Charsets.UTF_8).use { writer ->
+                val output = context.contentResolver.openOutputStream(uri)
+                if (output == null) {
+                    exportMessage = "تعذر فتح الملف للكتابة."
+                    return@rememberLauncherForActivityResult
+                }
+
+                output.use { stream ->
+                    OutputStreamWriter(stream, Charsets.UTF_8).use { writer ->
                         writer.write("\uFEFF")
                         writer.write(
                             listOf(
-                                "التاريخ",
-                                "الوقت",
-                                "الوصف",
-                                "النوع",
-                                "الحساب",
-                                "المبلغ",
-                                "العملة"
+                                "التاريخ", "الوقت", "الوصف",
+                                "النوع", "الحساب", "المبلغ", "العملة"
                             ).joinToString(",") { csvEscape(it) }
                         )
                         writer.write("\r\n")
 
                         exportTransactions.forEach { transaction ->
                             val date = SimpleDateFormat(
-                                "yyyy-MM-dd",
-                                Locale.US
+                                "yyyy-MM-dd", Locale.US
                             ).format(Date(transaction.timestamp))
                             val time = SimpleDateFormat(
-                                "HH:mm:ss",
-                                Locale.US
+                                "HH:mm:ss", Locale.US
                             ).format(Date(transaction.timestamp))
 
                             val row = listOf(
@@ -406,10 +408,7 @@ private fun RasidiApp() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Text(
-                text = "رصيدي الذكي",
-                style = MaterialTheme.typography.headlineMedium
-            )
+            Text("رصيدي الذكي", style = MaterialTheme.typography.headlineMedium)
             Text("إدارة الأرصدة والحركات والتقارير المالية")
         }
 
@@ -512,12 +511,13 @@ private fun RasidiApp() {
                     selected = selectedType == "دخل",
                     onClick = { selectedType = "دخل" }
                 )
-                Text("مقبوضات")
+                Text("مقبوضات", color = incomeColor)
+
                 RadioButton(
                     selected = selectedType == "مصروف",
                     onClick = { selectedType = "مصروف" }
                 )
-                Text("مدفوعات")
+                Text("مدفوعات", color = expenseColor)
             }
 
             Text("الحساب")
@@ -594,13 +594,22 @@ private fun RasidiApp() {
         }
 
         items(filteredTransactions) { transaction ->
+            val movementColor = transactionColor(transaction.type)
+
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Text(transaction.title, style = MaterialTheme.typography.titleMedium)
-                    Text("${transaction.type}: ${money(transaction.amount)} ${transaction.currency}")
+
+                    Text(
+                        "${if (transaction.type == "مصروف") "مدفوعات" else "مقبوضات"}: " +
+                            "${money(transaction.amount)} ${transaction.currency}",
+                        color = movementColor,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+
                     Text("الحساب: ${transaction.account}")
                     Text("التاريخ والوقت: ${formatDateTime(transaction.timestamp)}")
 
@@ -701,10 +710,18 @@ private fun RasidiApp() {
                         Text("الحساب: $reportAccount")
                         Text("العملة: $reportCurrency")
                         Text("عدد الحركات: ${reportTransactions.size}")
-                        Text("إجمالي المقبوضات: ${money(totalIncome)} $reportCurrency")
-                        Text("إجمالي المدفوعات: ${money(totalExpense)} $reportCurrency")
+
                         Text(
-                            "صافي الحركة: ${money(totalIncome - totalExpense)} $reportCurrency"
+                            "إجمالي المقبوضات: ${money(totalIncome)} $reportCurrency",
+                            color = incomeColor
+                        )
+                        Text(
+                            "إجمالي المدفوعات: ${money(totalExpense)} $reportCurrency",
+                            color = expenseColor
+                        )
+                        Text(
+                            "صافي الحركة: ${money(totalIncome - totalExpense)} $reportCurrency",
+                            color = if (totalIncome - totalExpense < 0) expenseColor else incomeColor
                         )
                     }
                 }
@@ -713,9 +730,7 @@ private fun RasidiApp() {
                     onClick = {
                         val safeStart = reportStart.replace("-", "")
                         val safeEnd = reportEnd.replace("-", "")
-                        exportLauncher.launch(
-                            "Rasidi_${safeStart}_to_${safeEnd}.csv"
-                        )
+                        exportLauncher.launch("Rasidi_${safeStart}_to_${safeEnd}.csv")
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -725,11 +740,26 @@ private fun RasidiApp() {
                 Text("الحركات المطابقة للتقرير: ${reportTransactions.size}")
 
                 reportTransactions.forEach { transaction ->
+                    val movementColor = transactionColor(transaction.type)
+
                     Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(10.dp)) {
-                            Text(transaction.title, style = MaterialTheme.typography.titleMedium)
-                            Text("${transaction.type}: ${money(transaction.amount)} ${transaction.currency}")
-                            Text("${transaction.account} • ${formatDateTime(transaction.timestamp)}")
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Text(
+                                transaction.title,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                "${if (transaction.type == "مصروف") "مدفوعات" else "مقبوضات"}: " +
+                                    "${money(transaction.amount)} ${transaction.currency}",
+                                color = movementColor,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                "${transaction.account} • ${formatDateTime(transaction.timestamp)}"
+                            )
                         }
                     }
                 }
