@@ -24,24 +24,47 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Restore debug signing key
-        id: debug-key-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: rasidi-debug-keystore-v1
+      - name: Prepare stable signing key
+        shell: bash
+        env:
+          RASIDI_KEYSTORE_BASE64: ${{ secrets.RASIDI_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
 
-      - name: Build Debug APK
+          if [ -z "${RASIDI_KEYSTORE_BASE64:-}" ]; then
+            echo "ERROR: Keystore secret is missing"
+            exit 1
+          fi
+
+          printf '%s\n' "$RASIDI_KEYSTORE_BASE64" \
+            | sed '/BEGIN CERTIFICATE/d; /END CERTIFICATE/d' \
+            | tr -d '\r' \
+            | base64 --decode > app/rasidi-release.jks
+
+          if [ ! -s app/rasidi-release.jks ]; then
+            echo "ERROR: Signing key file is empty"
+            exit 1
+          fi
+
+          echo "Signing key prepared successfully"
+
+      - name: Build signed Debug APK
+        env:
+          RASIDI_KEYSTORE_PASSWORD: ${{ secrets.RASIDI_KEYSTORE_PASSWORD }}
+          RASIDI_KEY_ALIAS: ${{ secrets.RASIDI_KEY_ALIAS }}
+          RASIDI_KEY_PASSWORD: ${{ secrets.RASIDI_KEY_PASSWORD }}
         run: gradle assembleDebug
 
       - name: Inspect APK signing certificate
         shell: bash
         run: |
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          echo "APK file:"
-          ls -lh "$APK"
+          set -euo pipefail
 
-          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" \
+            -name apksigner -type f | sort -V | tail -1)
 
           if [ -z "$APKSIGNER" ]; then
             echo "ERROR: apksigner not found"
@@ -49,13 +72,6 @@ jobs:
           fi
 
           "$APKSIGNER" verify --print-certs "$APK"
-
-      - name: Save debug signing key
-        if: steps.debug-key-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: rasidi-debug-keystore-v1
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
