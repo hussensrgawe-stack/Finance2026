@@ -3,7 +3,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="رصيدي الذكي"
+        android:label="مصروفك"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
