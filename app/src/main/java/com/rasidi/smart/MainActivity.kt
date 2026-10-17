@@ -16,19 +16,30 @@ import androidx.compose.ui.unit.dp
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.DecimalFormat
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 data class Transaction(
     val title: String,
     val amount: Double,
     val currency: String,
     val type: String,
-    val account: String
+    val account: String,
+    val timestamp: Long = System.currentTimeMillis()
 )
 
 private const val PREFS_NAME = "rasidi_preferences"
 private const val TRANSACTIONS_KEY = "saved_transactions"
 
 private val accountNames = listOf("نقدي", "شام كاش")
+
+private fun formatDateTime(timestamp: Long): String {
+    return SimpleDateFormat(
+        "yyyy/MM/dd - HH:mm",
+        Locale.getDefault()
+    ).format(Date(timestamp))
+}
 
 private fun loadTransactions(context: Context): List<Transaction> {
     val prefs = context.getSharedPreferences(
@@ -49,12 +60,16 @@ private fun loadTransactions(context: Context): List<Transaction> {
                     amount = item.getDouble("amount"),
                     currency = item.getString("currency"),
                     type = item.getString("type"),
-                    account = item.optString("account", "نقدي")
+                    account = item.optString("account", "نقدي"),
+                    timestamp = item.optLong(
+                        "timestamp",
+                        System.currentTimeMillis()
+                    )
                 )
             )
         }
         result
-    } catch (_: Exception) {
+    } catch (e: Exception) {
         emptyList()
     }
 }
@@ -66,13 +81,16 @@ private fun saveTransactions(
     val array = JSONArray()
 
     transactions.forEach { transaction ->
-        array.put(JSONObject().apply {
-            put("title", transaction.title)
-            put("amount", transaction.amount)
-            put("currency", transaction.currency)
-            put("type", transaction.type)
-            put("account", transaction.account)
-        })
+        array.put(
+            JSONObject().apply {
+                put("title", transaction.title)
+                put("amount", transaction.amount)
+                put("currency", transaction.currency)
+                put("type", transaction.type)
+                put("account", transaction.account)
+                put("timestamp", transaction.timestamp)
+            }
+        )
     }
 
     context.getSharedPreferences(
@@ -141,21 +159,6 @@ private fun calculateBalance(
     return total
 }
 
-private fun calculateTotal(
-    transactions: List<Transaction>,
-    account: String,
-    currency: String,
-    type: String
-): Double {
-    return transactions
-        .filter {
-            it.account == account &&
-            it.currency == currency &&
-            it.type == type
-        }
-        .sumOf { it.amount }
-}
-
 @Composable
 private fun BalanceCard(
     title: String,
@@ -163,59 +166,11 @@ private fun BalanceCard(
     currencyLabel: String,
     modifier: Modifier = Modifier
 ) {
-    Card(
-        modifier = modifier,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        ),
-        elevation = CardDefaults.cardElevation(
-            defaultElevation = 2.dp
-        )
-    ) {
+    Card(modifier = modifier) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                title,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                amount,
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Text(
-                currencyLabel,
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-    }
-}
-
-@Composable
-private fun SummaryCard(
-    title: String,
-    amount: String,
-    currencyLabel: String,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        elevation = CardDefaults.cardElevation(
-            defaultElevation = 1.dp
-        )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
+                .padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(
@@ -223,13 +178,8 @@ private fun SummaryCard(
                 style = MaterialTheme.typography.titleSmall
             )
             Text(
-                amount,
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Text(
-                currencyLabel,
-                style = MaterialTheme.typography.bodySmall
+                "$amount $currencyLabel",
+                style = MaterialTheme.typography.titleMedium
             )
         }
     }
@@ -253,16 +203,20 @@ fun FinanceApp() {
     val numberFormat = remember { DecimalFormat("#,##0.##") }
 
     var description by remember { mutableStateOf("") }
-    var incomeText by remember { mutableStateOf("") }
-    var expenseText by remember { mutableStateOf("") }
+    var salary by remember { mutableStateOf("") }
+    var expense by remember { mutableStateOf("") }
     var currency by remember { mutableStateOf("SYP") }
     var account by remember { mutableStateOf("نقدي") }
     var openingText by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf("") }
-
     var accountMenuExpanded by remember { mutableStateOf(false) }
-    var editingIndex by remember { mutableIntStateOf(-1) }
-    var refreshVersion by remember { mutableIntStateOf(0) }
+    var editingIndex by remember { mutableStateOf(-1) }
+    var refreshVersion by remember { mutableStateOf(0) }
+
+    var searchText by remember { mutableStateOf("") }
+    var filterAccount by remember { mutableStateOf("الكل") }
+    var filterCurrency by remember { mutableStateOf("الكل") }
+    var deleteIndex by remember { mutableStateOf(-1) }
 
     val transactions = remember(context) {
         mutableStateListOf<Transaction>().apply {
@@ -276,19 +230,20 @@ fun FinanceApp() {
         loadOpeningBalance(context, account, currency)
     }
 
+    val selectedBalance = calculateBalance(
+        context, transactions, account, currency
+    )
+
     fun parseAmount(text: String): Double? =
         text.trim().replace(',', '.').toDoubleOrNull()
 
     fun formatAmount(amount: Double): String =
         numberFormat.format(amount)
 
-    fun currencyLabel(code: String): String =
-        if (code == "SYP") "ل.س" else "$"
-
     fun clearForm() {
         description = ""
-        incomeText = ""
-        expenseText = ""
+        salary = ""
+        expense = ""
         editingIndex = -1
         errorMessage = ""
         openingText = loadOpeningBalance(
@@ -300,90 +255,67 @@ fun FinanceApp() {
         if (index !in transactions.indices) return
 
         val transaction = transactions[index]
-
         editingIndex = index
         description = transaction.title
         currency = transaction.currency
         account = transaction.account
 
-        incomeText = if (transaction.type == "دخل") {
+        salary = if (transaction.type == "دخل") {
             transaction.amount.toString()
         } else {
             ""
         }
 
-        expenseText = if (transaction.type == "مصروف") {
+        expense = if (transaction.type == "مصروف") {
             transaction.amount.toString()
         } else {
             ""
         }
 
         openingText = loadOpeningBalance(
-            context,
-            transaction.account,
-            transaction.currency
+            context, transaction.account, transaction.currency
         ).toString()
 
         errorMessage = ""
     }
 
-    val selectedBalance = calculateBalance(
-        context, transactions, account, currency
-    )
+    val visibleTransactions = transactions
+        .mapIndexed { index, transaction -> index to transaction }
+        .filter { entry ->
+            val transaction = entry.second
+            val matchesSearch = transaction.title.contains(
+                searchText.trim(),
+                ignoreCase = true
+            )
+            val matchesAccount = filterAccount == "الكل" ||
+                transaction.account == filterAccount
+            val matchesCurrency = filterCurrency == "الكل" ||
+                transaction.currency == filterCurrency
 
-    val selectedIncome = calculateTotal(
-        transactions, account, currency, "دخل"
-    )
-
-    val selectedExpenses = calculateTotal(
-        transactions, account, currency, "مصروف"
-    )
+            matchesSearch && matchesAccount && matchesCurrency
+        }
+        .sortedByDescending { it.second.timestamp }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("رصيدي الذكي") }
-            )
+            TopAppBar(title = { Text("رصيدي الذكي") })
         }
     ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-
-            // مقدمة لوحة التحكم
             item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor =
-                            MaterialTheme.colorScheme.primaryContainer
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            "إدارة أموالك الشخصية",
-                            style = MaterialTheme.typography.headlineSmall,
-                            color =
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Text(
-                            "كل أرصدتك وحركاتك المالية في مكان واحد",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color =
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
-                }
+                Text(
+                    "إدارة أموالك الشخصية",
+                    style = MaterialTheme.typography.titleLarge
+                )
+                Text("تابع أرصدتك ومصاريفك بسهولة")
             }
 
-            // بطاقات الأرصدة الأربعة
             item {
                 Text(
                     "الأرصدة المتاحة",
@@ -395,25 +327,24 @@ fun FinanceApp() {
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     BalanceCard(
-                        title = "نقدي - ليرة سورية",
-                        amount = formatAmount(
+                        "نقدي - الليرة السورية",
+                        formatAmount(
                             calculateBalance(
                                 context, transactions, "نقدي", "SYP"
                             )
                         ),
-                        currencyLabel = "ل.س",
-                        modifier = Modifier.weight(1f)
+                        "ل.س",
+                        Modifier.weight(1f)
                     )
-
                     BalanceCard(
-                        title = "نقدي - دولار",
-                        amount = formatAmount(
+                        "نقدي - الدولار الأمريكي",
+                        formatAmount(
                             calculateBalance(
                                 context, transactions, "نقدي", "USD"
                             )
                         ),
-                        currencyLabel = "$",
-                        modifier = Modifier.weight(1f)
+                        "$",
+                        Modifier.weight(1f)
                     )
                 }
 
@@ -422,38 +353,35 @@ fun FinanceApp() {
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     BalanceCard(
-                        title = "شام كاش - ليرة",
-                        amount = formatAmount(
+                        "شام كاش - الليرة السورية",
+                        formatAmount(
                             calculateBalance(
                                 context, transactions, "شام كاش", "SYP"
                             )
                         ),
-                        currencyLabel = "ل.س",
-                        modifier = Modifier.weight(1f)
+                        "ل.س",
+                        Modifier.weight(1f)
                     )
-
                     BalanceCard(
-                        title = "شام كاش - دولار",
-                        amount = formatAmount(
+                        "شام كاش - الدولار الأمريكي",
+                        formatAmount(
                             calculateBalance(
                                 context, transactions, "شام كاش", "USD"
                             )
                         ),
-                        currencyLabel = "$",
-                        modifier = Modifier.weight(1f)
+                        "$",
+                        Modifier.weight(1f)
                     )
                 }
             }
 
-            // اختيار الحساب والعملة
             item {
                 Text(
                     "الحساب والعملة",
-                    style = MaterialTheme.typography.titleLarge
+                    style = MaterialTheme.typography.titleMedium
                 )
 
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     FilterChip(
@@ -461,19 +389,18 @@ fun FinanceApp() {
                         onClick = {
                             currency = "SYP"
                             openingText = loadOpeningBalance(
-                                context, account, "SYP"
+                                context, account, currency
                             ).toString()
                             errorMessage = ""
                         },
                         label = { Text("الليرة السورية") }
                     )
-
                     FilterChip(
                         selected = currency == "USD",
                         onClick = {
                             currency = "USD"
                             openingText = loadOpeningBalance(
-                                context, account, "USD"
+                                context, account, currency
                             ).toString()
                             errorMessage = ""
                         },
@@ -483,9 +410,7 @@ fun FinanceApp() {
 
                 Box {
                     OutlinedButton(
-                        onClick = {
-                            accountMenuExpanded = true
-                        }
+                        onClick = { accountMenuExpanded = true }
                     ) {
                         Text("الحساب: $account")
                     }
@@ -512,74 +437,22 @@ fun FinanceApp() {
                     }
                 }
 
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor =
-                            MaterialTheme.colorScheme.secondaryContainer
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(
-                            "الرصيد الحالي",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Text(
-                            "${formatAmount(selectedBalance)} " +
-                                currencyLabel(currency),
-                            style = MaterialTheme.typography.headlineMedium,
-                            color =
-                                MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                    }
-                }
+                Text(
+                    "الرصيد الحالي: ${formatAmount(selectedBalance)} " +
+                        if (currency == "SYP") "ل.س" else "$"
+                )
             }
 
-            // ملخص المقبوضات والمدفوعات
-            item {
-                Text(
-                    "ملخص الحركة المالية",
-                    style = MaterialTheme.typography.titleLarge
-                )
-
-                Text(
-                    "$account • ${if (currency == "SYP") "الليرة السورية" else "الدولار الأمريكي"}",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    SummaryCard(
-                        title = "إجمالي المقبوضات",
-                        amount = formatAmount(selectedIncome),
-                        currencyLabel = currencyLabel(currency),
-                        modifier = Modifier.weight(1f)
-                    )
-
-                    SummaryCard(
-                        title = "إجمالي المدفوعات",
-                        amount = formatAmount(selectedExpenses),
-                        currencyLabel = currencyLabel(currency),
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-
-            // الرصيد الافتتاحي
             item {
                 Text(
                     "الرصيد الافتتاحي",
-                    style = MaterialTheme.typography.titleLarge
+                    style = MaterialTheme.typography.titleMedium
                 )
 
                 Text(
-                    "الرصيد المحفوظ: ${formatAmount(openingBalance)} " +
-                        currencyLabel(currency)
+                    "الرصيد الافتتاحي المحفوظ: " +
+                        formatAmount(openingBalance) +
+                        if (currency == "SYP") " ل.س" else " $"
                 )
 
                 OutlinedTextField(
@@ -589,7 +462,7 @@ fun FinanceApp() {
                         errorMessage = ""
                     },
                     label = {
-                        Text("الرصيد الافتتاحي")
+                        Text("الرصيد الافتتاحي لهذا الحساب")
                     },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
@@ -598,14 +471,13 @@ fun FinanceApp() {
                 Button(
                     onClick = {
                         val amount = parseAmount(openingText)
-
                         if (
                             amount == null ||
                             !amount.isFinite() ||
                             amount < 0
                         ) {
                             errorMessage =
-                                "أدخل رصيداً افتتاحياً صحيحاً غير سالب"
+                                "أدخل رصيداً صحيحاً غير سالب"
                         } else {
                             saveOpeningBalance(
                                 context, account, currency, amount
@@ -620,13 +492,13 @@ fun FinanceApp() {
                 }
             }
 
-            // نموذج إضافة الحركة أو تعديلها
             item {
                 Text(
-                    if (editingIndex >= 0)
-                        "تعديل حركة مالية"
-                    else
-                        "إضافة حركة مالية",
+                    if (editingIndex >= 0) {
+                        "تعديل الحركة المالية"
+                    } else {
+                        "إضافة حركة مالية"
+                    },
                     style = MaterialTheme.typography.titleLarge
                 )
 
@@ -637,35 +509,34 @@ fun FinanceApp() {
                         errorMessage = ""
                     },
                     label = { Text("وصف الحركة") },
-                    placeholder = { Text("مثال: راتب أو مشتريات") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
 
                 OutlinedTextField(
-                    value = incomeText,
+                    value = salary,
                     onValueChange = {
-                        incomeText = it
+                        salary = it
                         errorMessage = ""
                     },
-                    label = { Text("المقبوضات / الدخل") },
+                    label = { Text("دخل (اختياري)") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
 
                 OutlinedTextField(
-                    value = expenseText,
+                    value = expense,
                     onValueChange = {
-                        expenseText = it
+                        expense = it
                         errorMessage = ""
                     },
-                    label = { Text("المدفوعات / المصروف") },
+                    label = { Text("مصروف (اختياري)") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
 
                 Text(
-                    "اختر دخلاً أو مصروفاً واحداً عند تعديل حركة موجودة.",
+                    "سيُسجّل التاريخ والوقت تلقائياً عند الحفظ.",
                     style = MaterialTheme.typography.bodySmall
                 )
 
@@ -678,25 +549,19 @@ fun FinanceApp() {
 
                 Button(
                     onClick = {
-                        val cleanIncome = incomeText.trim()
-                        val cleanExpense = expenseText.trim()
+                        val incomeText = salary.trim()
+                        val expenseText = expense.trim()
+                        val income = parseAmount(incomeText)
+                        val cost = parseAmount(expenseText)
 
-                        val income = parseAmount(cleanIncome)
-                        val cost = parseAmount(cleanExpense)
-
-                        val validIncome =
-                            income != null &&
-                            income.isFinite() &&
-                            income > 0
-
-                        val validExpense =
-                            cost != null &&
-                            cost.isFinite() &&
-                            cost > 0
+                        val validIncome = income != null &&
+                            income.isFinite() && income > 0
+                        val validExpense = cost != null &&
+                            cost.isFinite() && cost > 0
 
                         val invalidInput =
-                            (cleanIncome.isNotEmpty() && !validIncome) ||
-                            (cleanExpense.isNotEmpty() && !validExpense)
+                            (incomeText.isNotEmpty() && !validIncome) ||
+                            (expenseText.isNotEmpty() && !validExpense)
 
                         when {
                             description.isBlank() -> {
@@ -710,7 +575,7 @@ fun FinanceApp() {
 
                             !validIncome && !validExpense -> {
                                 errorMessage =
-                                    "أدخل مبلغ الدخل أو المصروف"
+                                    "أدخل الدخل أو المصروف على الأقل"
                             }
 
                             editingIndex >= 0 &&
@@ -726,37 +591,44 @@ fun FinanceApp() {
                             }
 
                             else -> {
-                                /*
-                                 * نحسب الرصيد بعد استبعاد الحركة القديمة.
-                                 * هذا مهم عند تغيير الحساب أو العملة أثناء التعديل.
-                                 */
-                                val excludedIndex =
-                                    if (editingIndex >= 0) editingIndex else -1
-
-                                val balanceWithoutOldTransaction =
-                                    calculateBalance(
-                                        context = context,
-                                        transactions = transactions,
-                                        account = account,
-                                        currency = currency,
-                                        excludedIndex = excludedIndex
-                                    )
-
-                                /*
-                                 * عند إضافة دخل ومصروف معاً كحركتين جديدتين،
-                                 * يُسمح باستخدام الدخل ضمن الرصيد المتاح للمصروف.
-                                 * عند تعديل حركة، لا يوجد إلا نوع واحد.
-                                 */
-                                val incomeToInclude =
-                                    if (editingIndex < 0 && validIncome) {
-                                        income!!
+                                val oldTransaction =
+                                    if (editingIndex >= 0) {
+                                        transactions[editingIndex]
                                     } else {
-                                        0.0
+                                        null
                                     }
 
+                                val excludedIndex =
+                                    if (
+                                        oldTransaction != null &&
+                                        oldTransaction.account == account &&
+                                        oldTransaction.currency == currency
+                                    ) {
+                                        editingIndex
+                                    } else {
+                                        -1
+                                    }
+
+                                val availableBalance = calculateBalance(
+                                    context,
+                                    transactions,
+                                    account,
+                                    currency,
+                                    excludedIndex
+                                )
+
+                                val proposedIncome =
+                                    if (validIncome) income!! else 0.0
+
                                 val availableForExpense =
-                                    balanceWithoutOldTransaction +
-                                        incomeToInclude
+                                    availableBalance +
+                                        if (
+                                            editingIndex < 0 && validIncome
+                                        ) {
+                                            proposedIncome
+                                        } else {
+                                            0.0
+                                        }
 
                                 if (
                                     validExpense &&
@@ -766,23 +638,27 @@ fun FinanceApp() {
                                         "الرصيد غير كافٍ لهذا المصروف"
                                 } else {
                                     if (editingIndex >= 0) {
-                                        transactions[editingIndex] =
-                                            Transaction(
-                                                title = description.trim(),
-                                                amount = if (validIncome) {
-                                                    income!!
-                                                } else {
-                                                    cost!!
-                                                },
-                                                currency = currency,
-                                                type = if (validIncome) {
-                                                    "دخل"
-                                                } else {
-                                                    "مصروف"
-                                                },
-                                                account = account
-                                            )
+                                        val updated = Transaction(
+                                            title = description.trim(),
+                                            amount = if (validIncome) {
+                                                income!!
+                                            } else {
+                                                cost!!
+                                            },
+                                            currency = currency,
+                                            type = if (validIncome) {
+                                                "دخل"
+                                            } else {
+                                                "مصروف"
+                                            },
+                                            account = account,
+                                            timestamp = oldTransaction!!.timestamp
+                                        )
+
+                                        transactions[editingIndex] = updated
                                     } else {
+                                        val now = System.currentTimeMillis()
+
                                         if (validIncome) {
                                             transactions.add(
                                                 Transaction(
@@ -790,7 +666,8 @@ fun FinanceApp() {
                                                     amount = income!!,
                                                     currency = currency,
                                                     type = "دخل",
-                                                    account = account
+                                                    account = account,
+                                                    timestamp = now
                                                 )
                                             )
                                         }
@@ -802,7 +679,8 @@ fun FinanceApp() {
                                                     amount = cost!!,
                                                     currency = currency,
                                                     type = "مصروف",
-                                                    account = account
+                                                    account = account,
+                                                    timestamp = now
                                                 )
                                             )
                                         }
@@ -812,7 +690,6 @@ fun FinanceApp() {
                                         context,
                                         transactions.toList()
                                     )
-
                                     refreshVersion++
                                     clearForm()
                                 }
@@ -822,10 +699,11 @@ fun FinanceApp() {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        if (editingIndex >= 0)
+                        if (editingIndex >= 0) {
                             "حفظ التعديلات"
-                        else
+                        } else {
                             "حفظ الحركة"
+                        }
                     )
                 }
 
@@ -839,35 +717,91 @@ fun FinanceApp() {
                 }
             }
 
-            // أحدث الحركات أولاً
             item {
                 Text(
-                    "أحدث الحركات المالية",
+                    "البحث والتصفية",
                     style = MaterialTheme.typography.titleLarge
                 )
+
+                OutlinedTextField(
+                    value = searchText,
+                    onValueChange = { searchText = it },
+                    label = { Text("ابحث باسم الحركة أو وصفها") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+
+                Text("تصفية حسب الحساب")
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = filterAccount == "الكل",
+                        onClick = { filterAccount = "الكل" },
+                        label = { Text("الكل") }
+                    )
+                    FilterChip(
+                        selected = filterAccount == "نقدي",
+                        onClick = { filterAccount = "نقدي" },
+                        label = { Text("نقدي") }
+                    )
+                    FilterChip(
+                        selected = filterAccount == "شام كاش",
+                        onClick = { filterAccount = "شام كاش" },
+                        label = { Text("شام كاش") }
+                    )
+                }
+
+                Text("تصفية حسب العملة")
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = filterCurrency == "الكل",
+                        onClick = { filterCurrency = "الكل" },
+                        label = { Text("كل العملات") }
+                    )
+                    FilterChip(
+                        selected = filterCurrency == "SYP",
+                        onClick = { filterCurrency = "SYP" },
+                        label = { Text("الليرة السورية") }
+                    )
+                    FilterChip(
+                        selected = filterCurrency == "USD",
+                        onClick = { filterCurrency = "USD" },
+                        label = { Text("الدولار") }
+                    )
+                }
+
                 Text(
-                    "عدد الحركات المسجلة: ${transactions.size}",
-                    style = MaterialTheme.typography.bodySmall
+                    "النتائج: ${visibleTransactions.size} من " +
+                        "${transactions.size} حركة"
                 )
             }
 
+            item {
+                Text(
+                    "الحركات المسجلة",
+                    style = MaterialTheme.typography.titleLarge
+                )
+            }
+
+            if (visibleTransactions.isEmpty()) {
+                item {
+                    Text("لا توجد حركات تطابق البحث أو الفلاتر.")
+                }
+            }
+
             items(
-                items = transactions.mapIndexed { index, transaction ->
-                    index to transaction
-                }.reversed(),
+                items = visibleTransactions,
                 key = { it.first }
             ) { entry ->
                 val index = entry.first
                 val transaction = entry.second
 
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    elevation = CardDefaults.cardElevation(
-                        defaultElevation = 1.dp
-                    )
-                ) {
+                Card(modifier = Modifier.fillMaxWidth()) {
                     Column(
-                        modifier = Modifier.padding(14.dp),
+                        modifier = Modifier.padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
@@ -878,29 +812,94 @@ fun FinanceApp() {
                         Text(
                             "${transaction.type}: " +
                                 "${formatAmount(transaction.amount)} " +
-                                currencyLabel(transaction.currency),
-                            style = MaterialTheme.typography.titleSmall,
-                            color = if (transaction.type == "دخل") {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.error
-                            }
+                                if (transaction.currency == "SYP") {
+                                    "ل.س"
+                                } else {
+                                    "$"
+                                }
+                        )
+
+                        Text("الحساب: ${transaction.account}")
+                        Text(
+                            "العملة: " +
+                                if (transaction.currency == "SYP") {
+                                    "الليرة السورية"
+                                } else {
+                                    "الدولار الأمريكي"
+                                }
                         )
 
                         Text(
-                            "الحساب: ${transaction.account}",
-                            style = MaterialTheme.typography.bodyMedium
+                            "التاريخ والوقت: " +
+                                formatDateTime(transaction.timestamp),
+                            style = MaterialTheme.typography.bodySmall
                         )
 
-                        OutlinedButton(
-                            onClick = { beginEditing(index) },
-                            modifier = Modifier.fillMaxWidth()
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text("تعديل الحركة")
+                            OutlinedButton(
+                                onClick = { beginEditing(index) },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("تعديل")
+                            }
+
+                            OutlinedButton(
+                                onClick = { deleteIndex = index },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor =
+                                        MaterialTheme.colorScheme.error
+                                )
+                            ) {
+                                Text("حذف")
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    if (deleteIndex in transactions.indices) {
+        val transactionToDelete = transactions[deleteIndex]
+
+        AlertDialog(
+            onDismissRequest = { deleteIndex = -1 },
+            title = { Text("تأكيد حذف الحركة") },
+            text = {
+                Text(
+                    "هل أنت متأكد من حذف حركة " +
+                        "\"${transactionToDelete.title}\"؟ " +
+                        "سيُعاد احتساب الرصيد بعد الحذف."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        transactions.removeAt(deleteIndex)
+                        saveTransactions(context, transactions.toList())
+
+                        if (editingIndex == deleteIndex) {
+                            clearForm()
+                        } else if (editingIndex > deleteIndex) {
+                            editingIndex--
+                        }
+
+                        deleteIndex = -1
+                        refreshVersion++
+                    }
+                ) {
+                    Text("نعم، احذف")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteIndex = -1 }) {
+                    Text("إلغاء")
+                }
+            }
+        )
     }
 }
