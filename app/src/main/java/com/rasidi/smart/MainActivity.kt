@@ -28,7 +28,7 @@ data class Transaction(
 private const val PREFS_NAME = "rasidi_preferences"
 private const val TRANSACTIONS_KEY = "saved_transactions"
 
-private val accounts = listOf("نقدي", "شام كاش")
+private val accountNames = listOf("نقدي", "شام كاش")
 
 private fun loadTransactions(context: Context): List<Transaction> {
     val prefs = context.getSharedPreferences(
@@ -82,7 +82,7 @@ private fun saveTransactions(
         .apply()
 }
 
-private fun openingBalanceKey(
+private fun balanceKey(
     account: String,
     currency: String
 ): String {
@@ -99,7 +99,7 @@ private fun loadOpeningBalance(
         PREFS_NAME, Context.MODE_PRIVATE
     )
     return prefs.getString(
-        openingBalanceKey(account, currency), "0"
+        balanceKey(account, currency), "0"
     )?.toDoubleOrNull() ?: 0.0
 }
 
@@ -112,10 +112,7 @@ private fun saveOpeningBalance(
     context.getSharedPreferences(
         PREFS_NAME, Context.MODE_PRIVATE
     ).edit()
-        .putString(
-            openingBalanceKey(account, currency),
-            amount.toString()
-        )
+        .putString(balanceKey(account, currency), amount.toString())
         .apply()
 }
 
@@ -123,27 +120,26 @@ private fun calculateBalance(
     context: Context,
     transactions: List<Transaction>,
     account: String,
-    currency: String
+    currency: String,
+    excludedIndex: Int = -1
 ): Double {
     val opening = loadOpeningBalance(context, account, currency)
 
-    val income = transactions
-        .filter {
-            it.account == account &&
-                it.currency == currency &&
-                it.type == "دخل"
-        }
-        .sumOf { it.amount }
+    var total = opening
 
-    val expenses = transactions
-        .filter {
-            it.account == account &&
-                it.currency == currency &&
-                it.type == "مصروف"
+    transactions.forEachIndexed { index, transaction ->
+        if (index != excludedIndex &&
+            transaction.account == account &&
+            transaction.currency == currency
+        ) {
+            when (transaction.type) {
+                "دخل" -> total += transaction.amount
+                "مصروف" -> total -= transaction.amount
+            }
         }
-        .sumOf { it.amount }
+    }
 
-    return opening + income - expenses
+    return total
 }
 
 class MainActivity : ComponentActivity() {
@@ -163,14 +159,17 @@ fun FinanceApp() {
     val context = LocalContext.current
     val numberFormat = remember { DecimalFormat("#,##0.##") }
 
+    var description by remember { mutableStateOf("") }
     var salary by remember { mutableStateOf("") }
     var expense by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
     var currency by remember { mutableStateOf("SYP") }
     var account by remember { mutableStateOf("نقدي") }
-    var openingText by remember { mutableStateOf("0") }
+    var openingText by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf("") }
+
     var accountMenuExpanded by remember { mutableStateOf(false) }
+    var editingIndex by remember { mutableStateOf(-1) }
+    var refreshVersion by remember { mutableStateOf(0) }
 
     val transactions = remember(context) {
         mutableStateListOf<Transaction>().apply {
@@ -178,9 +177,11 @@ fun FinanceApp() {
         }
     }
 
-    val openingBalance = loadOpeningBalance(
-        context, account, currency
-    )
+    val openingBalance = remember(
+        context, account, currency, refreshVersion
+    ) {
+        loadOpeningBalance(context, account, currency)
+    }
 
     val selectedBalance = calculateBalance(
         context, transactions, account, currency
@@ -191,6 +192,38 @@ fun FinanceApp() {
 
     fun formatAmount(amount: Double): String =
         numberFormat.format(amount)
+
+    fun clearForm() {
+        description = ""
+        salary = ""
+        expense = ""
+        editingIndex = -1
+        errorMessage = ""
+    }
+
+    fun beginEditing(index: Int) {
+        if (index !in transactions.indices) return
+
+        val transaction = transactions[index]
+        editingIndex = index
+        description = transaction.title
+        currency = transaction.currency
+        account = transaction.account
+        salary = if (transaction.type == "دخل") {
+            transaction.amount.toString()
+        } else {
+            ""
+        }
+        expense = if (transaction.type == "مصروف") {
+            transaction.amount.toString()
+        } else {
+            ""
+        }
+        openingText = loadOpeningBalance(
+            context, transaction.account, transaction.currency
+        ).toString()
+        errorMessage = ""
+    }
 
     Scaffold(
         topBar = {
@@ -209,49 +242,71 @@ fun FinanceApp() {
                     "إدارة أموالك الشخصية",
                     style = MaterialTheme.typography.titleLarge
                 )
-                Text("تابع أرصدتك ومصاريفك بشكل مستقل")
+                Text("تابع أرصدتك ومصاريفك بسهولة")
             }
 
+            // الأرصدة: صفان، في كل صف بطاقتان
             item {
                 Text(
                     "الأرصدة المتاحة",
                     style = MaterialTheme.typography.titleLarge
                 )
 
-                accounts.forEach { acc ->
-                    listOf("SYP", "USD").forEach { curr ->
-                        val balance = calculateBalance(
-                            context, transactions, acc, curr
-                        )
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
+                @Composable
+                fun BalanceCard(
+                    title: String,
+                    acc: String,
+                    curr: String
+                ) {
+                    Card(modifier = Modifier.weight(1f)) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement =
+                                Arrangement.spacedBy(6.dp)
                         ) {
-                            Column(
-                                modifier = Modifier.padding(12.dp)
-                            ) {
-                                Text(
-                                    "$acc — " +
-                                        if (curr == "SYP")
-                                            "الليرة السورية"
-                                        else "الدولار الأمريكي",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Text(
-                                    "${formatAmount(balance)} " +
-                                        if (curr == "SYP") "ل.س" else "$",
-                                    style = MaterialTheme.typography.headlineSmall
-                                )
-                            }
+                            Text(
+                                title,
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Text(
+                                formatAmount(
+                                    calculateBalance(
+                                        context,
+                                        transactions,
+                                        acc,
+                                        curr
+                                    )
+                                ) + if (curr == "SYP") " ل.س" else " $",
+                                style = MaterialTheme.typography.titleMedium
+                            )
                         }
                     }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    BalanceCard("نقدي - الليرة السورية", "نقدي", "SYP")
+                    BalanceCard("نقدي - الدولار الأمريكي", "نقدي", "USD")
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    BalanceCard(
+                        "شام كاش - الليرة السورية", "شام كاش", "SYP"
+                    )
+                    BalanceCard(
+                        "شام كاش - الدولار الأمريكي", "شام كاش", "USD"
+                    )
                 }
             }
 
             item {
                 Text(
-                    "تحديد الحساب والعملة",
+                    "الحساب والعملة",
                     style = MaterialTheme.typography.titleMedium
                 )
 
@@ -267,6 +322,7 @@ fun FinanceApp() {
                         },
                         label = { Text("الليرة السورية") }
                     )
+
                     FilterChip(
                         selected = currency == "USD",
                         onClick = {
@@ -276,7 +332,7 @@ fun FinanceApp() {
                             ).toString()
                             errorMessage = ""
                         },
-                        label = { Text("الدولار") }
+                        label = { Text("الدولار الأمريكي") }
                     )
                 }
 
@@ -293,7 +349,7 @@ fun FinanceApp() {
                             accountMenuExpanded = false
                         }
                     ) {
-                        accounts.forEach { acc ->
+                        accountNames.forEach { acc ->
                             DropdownMenuItem(
                                 text = { Text(acc) },
                                 onClick = {
@@ -310,21 +366,15 @@ fun FinanceApp() {
                 }
 
                 Text(
-                    "الرصيد الحالي: " +
-                        "${formatAmount(selectedBalance)} " +
-                        if (currency == "SYP") "ل.س" else "$"
+                    "الرصيد الحالي: ${formatAmount(selectedBalance)}" +
+                        if (currency == "SYP") " ل.س" else " $"
                 )
             }
 
             item {
                 Text(
-                    "تحديد الرصيد الافتتاحي",
+                    "الرصيد الافتتاحي",
                     style = MaterialTheme.typography.titleMedium
-                )
-
-                Text(
-                    "أدخل المبلغ الموجود فعلياً في هذا الحساب. " +
-                        "لا تدخل مجموع أرصدتك الأخرى هنا."
                 )
 
                 OutlinedTextField(
@@ -334,11 +384,7 @@ fun FinanceApp() {
                         errorMessage = ""
                     },
                     label = {
-                        Text(
-                            if (currency == "SYP")
-                                "الرصيد الافتتاحي بالليرة"
-                            else "الرصيد الافتتاحي بالدولار"
-                        )
+                        Text("الرصيد الافتتاحي لهذا الحساب")
                     },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
@@ -351,11 +397,12 @@ fun FinanceApp() {
                             !amount.isFinite() || amount < 0
                         ) {
                             errorMessage =
-                                "أدخل رصيداً افتتاحياً صحيحاً غير سالب"
+                                "أدخل رصيداً صحيحاً غير سالب"
                         } else {
                             saveOpeningBalance(
                                 context, account, currency, amount
                             )
+                            refreshVersion++
                             errorMessage = ""
                         }
                     },
@@ -367,8 +414,10 @@ fun FinanceApp() {
 
             item {
                 Text(
-                    "إضافة حركة مالية",
-                    style = MaterialTheme.typography.titleMedium
+                    if (editingIndex >= 0)
+                        "تعديل الحركة المالية"
+                    else "إضافة حركة مالية",
+                    style = MaterialTheme.typography.titleLarge
                 )
 
                 OutlinedTextField(
@@ -423,13 +472,16 @@ fun FinanceApp() {
                         val validExpense = cost != null &&
                             cost.isFinite() && cost > 0
 
+                        val invalidInput =
+                            (incomeText.isNotEmpty() && !validIncome) ||
+                            (expenseText.isNotEmpty() && !validExpense)
+
                         when {
                             description.isBlank() -> {
                                 errorMessage = "يرجى إدخال وصف الحركة"
                             }
 
-                            (incomeText.isNotEmpty() && !validIncome) ||
-                                (expenseText.isNotEmpty() && !validExpense) -> {
+                            invalidInput -> {
                                 errorMessage =
                                     "أدخل مبالغ صحيحة أكبر من صفر"
                             }
@@ -439,88 +491,152 @@ fun FinanceApp() {
                                     "أدخل الدخل أو المصروف على الأقل"
                             }
 
-                            validExpense &&
-                                cost!! > selectedBalance +
-                                (if (validIncome) income!! else 0.0) -> {
+                            editingIndex >= 0 &&
+                                validIncome && validExpense -> {
                                 errorMessage =
-                                    "الرصيد غير كافٍ لهذا المصروف"
+                                    "عند التعديل أدخل دخلاً أو مصروفاً واحداً فقط"
+                            }
+
+                            editingIndex >= 0 &&
+                                editingIndex !in transactions.indices -> {
+                                errorMessage =
+                                    "تعذر العثور على الحركة المراد تعديلها"
                             }
 
                             else -> {
-                                if (validIncome) {
-                                    transactions.add(
-                                        Transaction(
-                                            description.trim(),
-                                            income!!,
-                                            currency,
-                                            "دخل",
-                                            account
-                                        )
+                                val availableForEdit = if (
+                                    editingIndex >= 0
+                                ) {
+                                    calculateBalance(
+                                        context,
+                                        transactions,
+                                        account,
+                                        currency,
+                                        editingIndex
                                     )
+                                } else {
+                                    selectedBalance
                                 }
 
-                                if (validExpense) {
-                                    transactions.add(
-                                        Transaction(
-                                            description.trim(),
-                                            cost!!,
-                                            currency,
-                                            "مصروف",
-                                            account
+                                val proposedIncome =
+                                    if (validIncome) income!! else 0.0
+
+                                if (
+                                    validExpense &&
+                                    cost!! > availableForEdit +
+                                        (if (editingIndex < 0)
+                                            proposedIncome else 0.0)
+                                ) {
+                                    errorMessage =
+                                        "الرصيد غير كافٍ لهذا المصروف"
+                                } else {
+                                    if (editingIndex >= 0) {
+                                        val updated = Transaction(
+                                            title = description.trim(),
+                                            amount = if (validIncome)
+                                                income!! else cost!!,
+                                            currency = currency,
+                                            type = if (validIncome)
+                                                "دخل" else "مصروف",
+                                            account = account
                                         )
+
+                                        transactions[editingIndex] = updated
+                                    } else {
+                                        if (validIncome) {
+                                            transactions.add(
+                                                Transaction(
+                                                    description.trim(),
+                                                    income!!,
+                                                    currency,
+                                                    "دخل",
+                                                    account
+                                                )
+                                            )
+                                        }
+
+                                        if (validExpense) {
+                                            transactions.add(
+                                                Transaction(
+                                                    description.trim(),
+                                                    cost!!,
+                                                    currency,
+                                                    "مصروف",
+                                                    account
+                                                )
+                                            )
+                                        }
+                                    }
+
+                                    saveTransactions(
+                                        context, transactions.toList()
                                     )
+                                    refreshVersion++
+                                    clearForm()
                                 }
-
-                                saveTransactions(
-                                    context, transactions.toList()
-                                )
-
-                                salary = ""
-                                expense = ""
-                                description = ""
-                                errorMessage = ""
                             }
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("حفظ الحركة")
+                    Text(
+                        if (editingIndex >= 0)
+                            "حفظ التعديلات"
+                        else "حفظ الحركة"
+                    )
+                }
+
+                if (editingIndex >= 0) {
+                    OutlinedButton(
+                        onClick = { clearForm() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("إلغاء التعديل")
+                    }
                 }
             }
 
             item {
                 Text(
-                    "حركات الحساب المحدد",
+                    "الحركات المسجلة (${transactions.size})",
                     style = MaterialTheme.typography.titleLarge
                 )
             }
 
             items(
-                items = transactions.filter {
-                    it.account == account && it.currency == currency
+                items = transactions.mapIndexed { index, transaction ->
+                    index to transaction
                 }.reversed(),
-                key = {
-                    "${it.title}_${it.amount}_${it.currency}_" +
-                        "${it.type}_${it.account}_" +
-                        transactions.indexOf(it)
-                }
-            ) { transaction ->
+                key = { it.first }
+            ) { entry ->
+                val index = entry.first
+                val transaction = entry.second
+
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(
                         modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
                             transaction.title,
                             style = MaterialTheme.typography.titleMedium
                         )
+
                         Text(
                             "${transaction.type}: " +
                                 "${formatAmount(transaction.amount)} " +
                                 if (transaction.currency == "SYP")
                                     "ل.س" else "$"
                         )
+
                         Text("الحساب: ${transaction.account}")
+
+                        OutlinedButton(
+                            onClick = { beginEditing(index) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("تعديل الحركة")
+                        }
                     }
                 }
             }
