@@ -1,3 +1,4 @@
+
 name: Build Rasidi Smart APK
 
 on:
@@ -23,16 +24,24 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-            - name: Build Debug APK
+      - name: Build Debug APK
         run: gradle assembleDebug
 
       - name: Inspect APK signing certificate
+        shell: bash
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
-          echo "APK created successfully"
+          echo "APK file:"
           ls -lh "$APK"
-          echo "Checking available signing tools"
-          find "$ANDROID_HOME/build-tools" -name apksigner -type f 2>/dev/null | head -1
+
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+
+          if [ -z "$APKSIGNER" ]; then
+            echo "ERROR: apksigner not found"
+            exit 1
+          fi
+
+          "$APKSIGNER" verify --print-certs "$APK"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
