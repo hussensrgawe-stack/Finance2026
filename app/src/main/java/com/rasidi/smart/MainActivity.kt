@@ -129,7 +129,7 @@ fun FinanceApp() {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("رصيدي الذكي") }
+                title = { Text("مصروفك") }
             )
         }
     ) { padding ->
