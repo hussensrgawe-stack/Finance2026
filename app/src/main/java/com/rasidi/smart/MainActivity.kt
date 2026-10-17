@@ -1,4 +1,3 @@
-
 package com.rasidi.smart
 
 import android.content.Context
@@ -15,8 +14,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -38,7 +39,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.OutputStreamWriter
@@ -65,6 +70,9 @@ private val accounts = listOf("نقدي", "شام كاش")
 
 private val incomeColor = Color(0xFF16803D)
 private val expenseColor = Color(0xFFD32F2F)
+private val dashboardGreen = Color(0xFF14532D)
+private val dashboardBackground = Color(0xFFF4F7F5)
+private val dashboardBlue = Color(0xFF2457A7)
 
 private fun transactionColor(type: String): Color =
     if (type == "مصروف") expenseColor else incomeColor
@@ -136,18 +144,24 @@ private fun loadTransactions(context: Context): MutableList<Transaction> {
                     currency = item.optString("currency", "SYP"),
                     type = type,
                     account = item.optString("account", "نقدي"),
-                    timestamp = item.optLong("timestamp", System.currentTimeMillis())
+                    timestamp = item.optLong(
+                        "timestamp",
+                        System.currentTimeMillis()
+                    )
                 )
             )
         }
     } catch (_: Exception) {
-        // Keep the app usable if saved data cannot be read.
+        // إبقاء التطبيق قابلاً للاستخدام إذا تعذرت قراءة البيانات.
     }
 
     return result
 }
 
-private fun saveTransactions(context: Context, transactions: List<Transaction>) {
+private fun saveTransactions(
+    context: Context,
+    transactions: List<Transaction>
+) {
     val array = JSONArray()
 
     transactions.forEach { transaction ->
@@ -177,12 +191,102 @@ private fun openingKey(account: String, currency: String): String {
 private fun csvEscape(value: String): String =
     "\"" + value.replace("\"", "\"\"") + "\""
 
+@Composable
+private fun BalanceCard(
+    title: String,
+    amount: Double,
+    currency: String,
+    accent: Color,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(
+            containerColor = Color.White
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFF505A55)
+            )
+
+            Text(
+                text = money(amount),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = accent
+            )
+
+            Text(
+                text = currency,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray
+            )
+        }
+    }
+}
+
+@Composable
+private fun MovementSummaryCard(
+    title: String,
+    sypAmount: Double,
+    usdAmount: Double,
+    accent: Color,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(
+            containerColor = Color.White
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = accent
+            )
+
+            Text(
+                "${money(sypAmount)} ل.س",
+                color = accent,
+                fontWeight = FontWeight.SemiBold
+            )
+
+            Text(
+                "${money(usdAmount)} USD",
+                color = accent,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         setContent {
             MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = dashboardBackground
+                ) {
                     RasidiApp()
                 }
             }
@@ -193,6 +297,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun RasidiApp() {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
 
     var transactions by remember {
         mutableStateOf(loadTransactions(context).toList())
@@ -233,8 +339,13 @@ private fun RasidiApp() {
                 val startParsed = parseDate(currentReportStart)
                 val endParsed = parseDate(currentReportEnd)
 
-                if (startParsed == null || endParsed == null || endParsed < startParsed) {
-                    exportMessage = "تحقق من تاريخ البداية والنهاية قبل التصدير."
+                if (
+                    startParsed == null ||
+                    endParsed == null ||
+                    endParsed < startParsed
+                ) {
+                    exportMessage =
+                        "تحقق من تاريخ البداية والنهاية قبل التصدير."
                     return@rememberLauncherForActivityResult
                 }
 
@@ -244,12 +355,15 @@ private fun RasidiApp() {
                 val exportTransactions = currentTransactions.filter { transaction ->
                     transaction.timestamp >= startMillis &&
                         transaction.timestamp < endExclusive &&
-                        (currentReportAccount == "الكل" ||
-                            transaction.account == currentReportAccount) &&
+                        (
+                            currentReportAccount == "الكل" ||
+                                transaction.account == currentReportAccount
+                            ) &&
                         transaction.currency == currentReportCurrency
                 }.sortedBy { it.timestamp }
 
                 val output = context.contentResolver.openOutputStream(uri)
+
                 if (output == null) {
                     exportMessage = "تعذر فتح الملف للكتابة."
                     return@rememberLauncherForActivityResult
@@ -260,18 +374,26 @@ private fun RasidiApp() {
                         writer.write("\uFEFF")
                         writer.write(
                             listOf(
-                                "التاريخ", "الوقت", "الوصف",
-                                "النوع", "الحساب", "المبلغ", "العملة"
+                                "التاريخ",
+                                "الوقت",
+                                "الوصف",
+                                "النوع",
+                                "الحساب",
+                                "المبلغ",
+                                "العملة"
                             ).joinToString(",") { csvEscape(it) }
                         )
                         writer.write("\r\n")
 
                         exportTransactions.forEach { transaction ->
                             val date = SimpleDateFormat(
-                                "yyyy-MM-dd", Locale.US
+                                "yyyy-MM-dd",
+                                Locale.US
                             ).format(Date(transaction.timestamp))
+
                             val time = SimpleDateFormat(
-                                "HH:mm:ss", Locale.US
+                                "HH:mm:ss",
+                                Locale.US
                             ).format(Date(transaction.timestamp))
 
                             val row = listOf(
@@ -280,10 +402,17 @@ private fun RasidiApp() {
                                 transaction.title,
                                 transaction.type,
                                 transaction.account,
-                                String.format(Locale.US, "%.2f", transaction.amount),
+                                String.format(
+                                    Locale.US,
+                                    "%.2f",
+                                    transaction.amount
+                                ),
                                 transaction.currency
                             )
-                            writer.write(row.joinToString(",") { csvEscape(it) })
+
+                            writer.write(
+                                row.joinToString(",") { csvEscape(it) }
+                            )
                             writer.write("\r\n")
                         }
                     }
@@ -291,13 +420,15 @@ private fun RasidiApp() {
 
                 exportMessage = "تم تجهيز ملف التقرير للتصدير."
             } catch (e: Exception) {
-                exportMessage = "تعذر تصدير الملف: ${e.localizedMessage ?: "خطأ غير معروف"}"
+                exportMessage =
+                    "تعذر تصدير الملف: ${e.localizedMessage ?: "خطأ غير معروف"}"
             }
         }
     }
 
     val reportStartParsed = parseDate(reportStart)
     val reportEndParsed = parseDate(reportEnd)
+
     val reportDatesValid =
         reportStartParsed != null &&
             reportEndParsed != null &&
@@ -310,7 +441,10 @@ private fun RasidiApp() {
         transactions.filter { transaction ->
             transaction.timestamp >= startMillis &&
                 transaction.timestamp < endExclusive &&
-                (reportAccount == "الكل" || transaction.account == reportAccount) &&
+                (
+                    reportAccount == "الكل" ||
+                        transaction.account == reportAccount
+                    ) &&
                 transaction.currency == reportCurrency
         }.sortedByDescending { it.timestamp }
     } else {
@@ -334,13 +468,23 @@ private fun RasidiApp() {
         .sortedByDescending { it.timestamp }
 
     fun balanceFor(account: String, currency: String): Double {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val opening = prefs.getString(openingKey(account, currency), "0")
-            ?.toDoubleOrNull() ?: 0.0
+        val prefs = context.getSharedPreferences(
+            PREFS_NAME,
+            Context.MODE_PRIVATE
+        )
+
+        val opening = prefs.getString(
+            openingKey(account, currency),
+            "0"
+        )?.toDoubleOrNull() ?: 0.0
 
         val movement = transactions
-            .filter { it.account == account && it.currency == currency }
-            .sumOf { if (it.type == "دخل") it.amount else -it.amount }
+            .filter {
+                it.account == account && it.currency == currency
+            }
+            .sumOf {
+                if (it.type == "دخل") it.amount else -it.amount
+            }
 
         return opening + movement
     }
@@ -358,18 +502,25 @@ private fun RasidiApp() {
             message = "يرجى إدخال وصف الحركة."
             return
         }
+
         if (amount == null || amount <= 0.0) {
             message = "يرجى إدخال مبلغ صحيح أكبر من صفر."
             return
         }
 
         val old = editingTransaction
+
         val available = balanceFor(selectedAccount, selectedCurrency) -
-            if (old != null &&
+            if (
+                old != null &&
                 old.account == selectedAccount &&
                 old.currency == selectedCurrency &&
                 old.type == "مصروف"
-            ) old.amount else 0.0
+            ) {
+                old.amount
+            } else {
+                0.0
+            }
 
         if (selectedType == "مصروف" && amount > available) {
             message = "الرصيد المتاح غير كافٍ لهذه الحركة."
@@ -386,10 +537,14 @@ private fun RasidiApp() {
         )
 
         val updated = transactions.toMutableList()
+
         if (old != null) {
             val index = updated.indexOf(old)
-            if (index >= 0) updated[index] = updatedTransaction
-            else updated.add(updatedTransaction)
+            if (index >= 0) {
+                updated[index] = updatedTransaction
+            } else {
+                updated.add(updatedTransaction)
+            }
         } else {
             updated.add(updatedTransaction)
         }
@@ -401,55 +556,327 @@ private fun RasidiApp() {
         message = "تم حفظ الحركة بنجاح."
     }
 
+    // ملخص حركات اليوم، مع فصل العملتين لتجنب جمعهما معاً.
+    val todayStart = startOfDay(System.currentTimeMillis())
+    val tomorrowStart = nextDay(todayStart)
+
+    val todayTransactions = transactions.filter {
+        it.timestamp >= todayStart && it.timestamp < tomorrowStart
+    }
+
+    val todayIncomeSyp = todayTransactions
+        .filter { it.type == "دخل" && it.currency == "SYP" }
+        .sumOf { it.amount }
+
+    val todayIncomeUsd = todayTransactions
+        .filter { it.type == "دخل" && it.currency == "USD" }
+        .sumOf { it.amount }
+
+    val todayExpenseSyp = todayTransactions
+        .filter { it.type == "مصروف" && it.currency == "SYP" }
+        .sumOf { it.amount }
+
+    val todayExpenseUsd = todayTransactions
+        .filter { it.type == "مصروف" && it.currency == "USD" }
+        .sumOf { it.amount }
+
+    val totalBalanceSyp =
+        balanceFor("نقدي", "SYP") + balanceFor("شام كاش", "SYP")
+
+    val totalBalanceUsd =
+        balanceFor("نقدي", "USD") + balanceFor("شام كاش", "USD")
+
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // عنوان التطبيق
         item {
-            Text("رصيدي الذكي", style = MaterialTheme.typography.headlineMedium)
-            Text("إدارة الأرصدة والحركات والتقارير المالية")
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 18.dp, bottom = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    "رصيدي الذكي",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = dashboardGreen
+                )
+
+                Text(
+                    "لوحتك المالية اليومية",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF65736A)
+                )
+            }
         }
 
+        // لوحة الأرصدة الرئيسية
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
+                    containerColor = dashboardGreen
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("الأرصدة الحالية", style = MaterialTheme.typography.titleLarge)
-                    accounts.forEach { account ->
-                        Text(account, style = MaterialTheme.typography.titleMedium)
-                        currencies.forEach { currency ->
-                            Text("$currency: ${money(balanceFor(account, currency))}")
+                    Text(
+                        "إجمالي الأرصدة الحالية",
+                        color = Color.White.copy(alpha = 0.9f),
+                        style = MaterialTheme.typography.titleMedium
+                    )
+
+                    HorizontalDivider(
+                        color = Color.White.copy(alpha = 0.25f)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                "الرصيد بالليرة السورية",
+                                color = Color.White.copy(alpha = 0.85f),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+
+                            Text(
+                                money(totalBalanceSyp),
+                                color = Color.White,
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
+
+                        Text(
+                            "ل.س",
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+
+                    HorizontalDivider(
+                        color = Color.White.copy(alpha = 0.25f)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                "الرصيد بالدولار",
+                                color = Color.White.copy(alpha = 0.85f),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+
+                            Text(
+                                money(totalBalanceUsd),
+                                color = Color.White,
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Text(
+                            "USD",
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleMedium
+                        )
                     }
                 }
             }
         }
 
+        // الأرصدة حسب الحساب والعملة
+        item {
+            Text(
+                "تفاصيل الأرصدة",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF26372C)
+            )
+
+            Spacer(modifier = Modifier.height(2.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                BalanceCard(
+                    title = "الرصيد النقدي",
+                    amount = balanceFor("نقدي", "SYP"),
+                    currency = "ل.س",
+                    accent = dashboardBlue,
+                    modifier = Modifier.weight(1f)
+                )
+
+                BalanceCard(
+                    title = "شام كاش",
+                    amount = balanceFor("شام كاش", "SYP"),
+                    currency = "ل.س",
+                    accent = dashboardBlue,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                BalanceCard(
+                    title = "النقدي",
+                    amount = balanceFor("نقدي", "USD"),
+                    currency = "USD",
+                    accent = dashboardBlue,
+                    modifier = Modifier.weight(1f)
+                )
+
+                BalanceCard(
+                    title = "شام كاش",
+                    amount = balanceFor("شام كاش", "USD"),
+                    currency = "USD",
+                    accent = dashboardBlue,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        // المقبوضات والمدفوعات لهذا اليوم
+        item {
+            Text(
+                "الحركة المالية اليوم",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF26372C)
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                MovementSummaryCard(
+                    title = "المقبوضات",
+                    sypAmount = todayIncomeSyp,
+                    usdAmount = todayIncomeUsd,
+                    accent = incomeColor,
+                    modifier = Modifier.weight(1f)
+                )
+
+                MovementSummaryCard(
+                    title = "المدفوعات",
+                    sypAmount = todayExpenseSyp,
+                    usdAmount = todayExpenseUsd,
+                    accent = expenseColor,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Button(
+                    onClick = {
+                        editingTransaction = null
+                        selectedType = "دخل"
+                        title = ""
+                        amountText = ""
+                        message = ""
+                        coroutineScope.launch {
+                            listState.animateScrollToItem(4)
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("＋ تسجيل مقبوض")
+                }
+
+                Button(
+                    onClick = {
+                        editingTransaction = null
+                        selectedType = "مصروف"
+                        title = ""
+                        amountText = ""
+                        message = ""
+                        coroutineScope.launch {
+                            listState.animateScrollToItem(4)
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("− تسجيل مدفوع")
+                }
+            }
+        }
+
+        // الرصيد الافتتاحي
         item {
             HorizontalDivider()
-            Text("تسجيل الرصيد الافتتاحي", style = MaterialTheme.typography.titleLarge)
+
+            Text(
+                "تسجيل الرصيد الافتتاحي",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+
+            Text(
+                "حدد الحساب والعملة ثم أدخل الرصيد الموجود لديك عند بدء استخدام التطبيق."
+            )
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 accounts.forEach { account ->
-                    OutlinedButton(onClick = { openingAccount = account }) {
-                        Text(if (openingAccount == account) "✓ $account" else account)
+                    OutlinedButton(
+                        onClick = { openingAccount = account }
+                    ) {
+                        Text(
+                            if (openingAccount == account) {
+                                "✓ $account"
+                            } else {
+                                account
+                            }
+                        )
                     }
                 }
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 currencies.forEach { currency ->
-                    OutlinedButton(onClick = { openingCurrency = currency }) {
-                        Text(if (openingCurrency == currency) "✓ $currency" else currency)
+                    OutlinedButton(
+                        onClick = { openingCurrency = currency }
+                    ) {
+                        Text(
+                            if (openingCurrency == currency) {
+                                "✓ $currency"
+                            } else {
+                                currency
+                            }
+                        )
                     }
                 }
             }
@@ -458,22 +885,29 @@ private fun RasidiApp() {
                 value = openingText,
                 onValueChange = { openingText = it },
                 label = { Text("قيمة الرصيد الافتتاحي") },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
             )
 
             Button(
                 onClick = {
-                    val amount = openingText.replace(",", "").toDoubleOrNull()
+                    val amount = openingText
+                        .replace(",", "")
+                        .toDoubleOrNull()
+
                     if (amount == null || amount < 0.0) {
                         message = "أدخل رصيداً افتتاحياً صحيحاً."
                     } else {
-                        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                            .edit()
+                        context.getSharedPreferences(
+                            PREFS_NAME,
+                            Context.MODE_PRIVATE
+                        ).edit()
                             .putString(
                                 openingKey(openingAccount, openingCurrency),
                                 amount.toString()
                             )
                             .apply()
+
                         openingText = ""
                         message = "تم حفظ الرصيد الافتتاحي."
                     }
@@ -484,11 +918,18 @@ private fun RasidiApp() {
             }
         }
 
+        // إضافة وتعديل الحركات
         item {
             HorizontalDivider()
+
             Text(
-                if (editingTransaction == null) "إضافة حركة مالية" else "تعديل الحركة المالية",
-                style = MaterialTheme.typography.titleLarge
+                if (editingTransaction == null) {
+                    "إضافة حركة مالية"
+                } else {
+                    "تعديل الحركة المالية"
+                },
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
             )
 
             OutlinedTextField(
@@ -502,10 +943,12 @@ private fun RasidiApp() {
                 value = amountText,
                 onValueChange = { amountText = it },
                 label = { Text("المبلغ") },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
             )
 
             Text("نوع الحركة")
+
             Row(verticalAlignment = Alignment.CenterVertically) {
                 RadioButton(
                     selected = selectedType == "دخل",
@@ -521,25 +964,52 @@ private fun RasidiApp() {
             }
 
             Text("الحساب")
+
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 accounts.forEach { account ->
-                    OutlinedButton(onClick = { selectedAccount = account }) {
-                        Text(if (selectedAccount == account) "✓ $account" else account)
+                    OutlinedButton(
+                        onClick = { selectedAccount = account }
+                    ) {
+                        Text(
+                            if (selectedAccount == account) {
+                                "✓ $account"
+                            } else {
+                                account
+                            }
+                        )
                     }
                 }
             }
 
             Text("العملة")
+
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 currencies.forEach { currency ->
-                    OutlinedButton(onClick = { selectedCurrency = currency }) {
-                        Text(if (selectedCurrency == currency) "✓ $currency" else currency)
+                    OutlinedButton(
+                        onClick = { selectedCurrency = currency }
+                    ) {
+                        Text(
+                            if (selectedCurrency == currency) {
+                                "✓ $currency"
+                            } else {
+                                currency
+                            }
+                        )
                     }
                 }
             }
 
-            Button(onClick = { saveMovement() }, modifier = Modifier.fillMaxWidth()) {
-                Text(if (editingTransaction == null) "حفظ الحركة" else "حفظ التعديلات")
+            Button(
+                onClick = { saveMovement() },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    if (editingTransaction == null) {
+                        "حفظ الحركة"
+                    } else {
+                        "حفظ التعديلات"
+                    }
+                )
             }
 
             if (editingTransaction != null) {
@@ -557,13 +1027,22 @@ private fun RasidiApp() {
             }
 
             if (message.isNotBlank()) {
-                Text(message, color = MaterialTheme.colorScheme.primary)
+                Text(
+                    message,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
         }
 
+        // البحث والتصفية
         item {
             HorizontalDivider()
-            Text("البحث وتصفية الحركات", style = MaterialTheme.typography.titleLarge)
+
+            Text(
+                "البحث وتصفية الحركات",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
 
             OutlinedTextField(
                 value = searchText,
@@ -573,19 +1052,37 @@ private fun RasidiApp() {
             )
 
             Text("تصفية الحساب")
+
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 (listOf("الكل") + accounts).forEach { account ->
-                    OutlinedButton(onClick = { filterAccount = account }) {
-                        Text(if (filterAccount == account) "✓ $account" else account)
+                    OutlinedButton(
+                        onClick = { filterAccount = account }
+                    ) {
+                        Text(
+                            if (filterAccount == account) {
+                                "✓ $account"
+                            } else {
+                                account
+                            }
+                        )
                     }
                 }
             }
 
             Text("تصفية العملة")
+
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 (listOf("الكل") + currencies).forEach { currency ->
-                    OutlinedButton(onClick = { filterCurrency = currency }) {
-                        Text(if (filterCurrency == currency) "✓ $currency" else currency)
+                    OutlinedButton(
+                        onClick = { filterCurrency = currency }
+                    ) {
+                        Text(
+                            if (filterCurrency == currency) {
+                                "✓ $currency"
+                            } else {
+                                currency
+                            }
+                        )
                     }
                 }
             }
@@ -593,15 +1090,25 @@ private fun RasidiApp() {
             Text("عدد الحركات المعروضة: ${filteredTransactions.size}")
         }
 
+        // قائمة الحركات
         items(filteredTransactions) { transaction ->
             val movementColor = transactionColor(transaction.type)
 
-            Card(modifier = Modifier.fillMaxWidth()) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White
+                )
+            ) {
                 Column(
                     modifier = Modifier.padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    Text(transaction.title, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        transaction.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
 
                     Text(
                         "${if (transaction.type == "مصروف") "مدفوعات" else "مقبوضات"}: " +
@@ -623,12 +1130,18 @@ private fun RasidiApp() {
                                 selectedAccount = transaction.account
                                 selectedType = transaction.type
                                 message = ""
+
+                                coroutineScope.launch {
+                                    listState.animateScrollToItem(4)
+                                }
                             }
                         ) {
                             Text("تعديل")
                         }
 
-                        OutlinedButton(onClick = { deleteTransaction = transaction }) {
+                        OutlinedButton(
+                            onClick = { deleteTransaction = transaction }
+                        ) {
                             Text("حذف")
                         }
                     }
@@ -636,10 +1149,19 @@ private fun RasidiApp() {
             }
         }
 
+        // التقرير المالي
         item {
             HorizontalDivider()
-            Text("تقرير مالي حسب الفترة", style = MaterialTheme.typography.titleLarge)
-            Text("أدخل التاريخين بالصيغة yyyy-MM-dd. تاريخ النهاية يشمل اليوم كاملاً.")
+
+            Text(
+                "تقرير مالي حسب الفترة",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+
+            Text(
+                "أدخل التاريخين بالصيغة yyyy-MM-dd. تاريخ النهاية يشمل اليوم كاملاً."
+            )
 
             OutlinedTextField(
                 value = reportStart,
@@ -658,38 +1180,60 @@ private fun RasidiApp() {
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = {
-                    val today = todayString()
-                    reportStart = today
-                    reportEnd = today
-                }) {
+                OutlinedButton(
+                    onClick = {
+                        val today = todayString()
+                        reportStart = today
+                        reportEnd = today
+                    }
+                ) {
                     Text("اليوم")
                 }
 
-                OutlinedButton(onClick = {
-                    val calendar = Calendar.getInstance()
-                    reportEnd = dateFormat().format(calendar.time)
-                    calendar.set(Calendar.DAY_OF_MONTH, 1)
-                    reportStart = dateFormat().format(calendar.time)
-                }) {
+                OutlinedButton(
+                    onClick = {
+                        val calendar = Calendar.getInstance()
+                        reportEnd = dateFormat().format(calendar.time)
+                        calendar.set(Calendar.DAY_OF_MONTH, 1)
+                        reportStart = dateFormat().format(calendar.time)
+                    }
+                ) {
                     Text("هذا الشهر")
                 }
             }
 
             Text("الحساب المشمول بالتقرير")
+
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 (listOf("الكل") + accounts).forEach { account ->
-                    OutlinedButton(onClick = { reportAccount = account }) {
-                        Text(if (reportAccount == account) "✓ $account" else account)
+                    OutlinedButton(
+                        onClick = { reportAccount = account }
+                    ) {
+                        Text(
+                            if (reportAccount == account) {
+                                "✓ $account"
+                            } else {
+                                account
+                            }
+                        )
                     }
                 }
             }
 
             Text("عملة التقرير")
+
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 currencies.forEach { currency ->
-                    OutlinedButton(onClick = { reportCurrency = currency }) {
-                        Text(if (reportCurrency == currency) "✓ $currency" else currency)
+                    OutlinedButton(
+                        onClick = { reportCurrency = currency }
+                    ) {
+                        Text(
+                            if (reportCurrency == currency) {
+                                "✓ $currency"
+                            } else {
+                                currency
+                            }
+                        )
                     }
                 }
             }
@@ -700,12 +1244,22 @@ private fun RasidiApp() {
                     color = MaterialTheme.colorScheme.error
                 )
             } else {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color.White
+                    )
+                ) {
                     Column(
                         modifier = Modifier.padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(7.dp)
                     ) {
-                        Text("ملخص التقرير", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "ملخص التقرير",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+
                         Text("الفترة: $reportStart إلى $reportEnd")
                         Text("الحساب: $reportAccount")
                         Text("العملة: $reportCurrency")
@@ -715,13 +1269,20 @@ private fun RasidiApp() {
                             "إجمالي المقبوضات: ${money(totalIncome)} $reportCurrency",
                             color = incomeColor
                         )
+
                         Text(
                             "إجمالي المدفوعات: ${money(totalExpense)} $reportCurrency",
                             color = expenseColor
                         )
+
                         Text(
                             "صافي الحركة: ${money(totalIncome - totalExpense)} $reportCurrency",
-                            color = if (totalIncome - totalExpense < 0) expenseColor else incomeColor
+                            color = if (totalIncome - totalExpense < 0) {
+                                expenseColor
+                            } else {
+                                incomeColor
+                            },
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -730,7 +1291,9 @@ private fun RasidiApp() {
                     onClick = {
                         val safeStart = reportStart.replace("-", "")
                         val safeEnd = reportEnd.replace("-", "")
-                        exportLauncher.launch("Rasidi_${safeStart}_to_${safeEnd}.csv")
+                        exportLauncher.launch(
+                            "Rasidi_${safeStart}_to_${safeEnd}.csv"
+                        )
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -742,7 +1305,12 @@ private fun RasidiApp() {
                 reportTransactions.forEach { transaction ->
                     val movementColor = transactionColor(transaction.type)
 
-                    Card(modifier = Modifier.fillMaxWidth()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color.White
+                        )
+                    ) {
                         Column(
                             modifier = Modifier.padding(10.dp),
                             verticalArrangement = Arrangement.spacedBy(5.dp)
@@ -751,14 +1319,17 @@ private fun RasidiApp() {
                                 transaction.title,
                                 style = MaterialTheme.typography.titleMedium
                             )
+
                             Text(
                                 "${if (transaction.type == "مصروف") "مدفوعات" else "مقبوضات"}: " +
                                     "${money(transaction.amount)} ${transaction.currency}",
                                 color = movementColor,
                                 style = MaterialTheme.typography.titleMedium
                             )
+
                             Text(
-                                "${transaction.account} • ${formatDateTime(transaction.timestamp)}"
+                                "${transaction.account} • " +
+                                    formatDateTime(transaction.timestamp)
                             )
                         }
                     }
@@ -766,44 +1337,63 @@ private fun RasidiApp() {
             }
 
             if (exportMessage.isNotBlank()) {
-                Text(exportMessage, color = MaterialTheme.colorScheme.primary)
+                Text(
+                    exportMessage,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
         }
 
         item {
             Spacer(modifier = Modifier.height(12.dp))
+
             Text(
-                "تذكير: احتفظ بنسخة من ملف CSV بعد تصديره، ولا تشارك بياناتك المالية أو ملفاتك الخاصة مع الآخرين."
+                "تذكير: احتفظ بنسخة من ملف CSV بعد تصديره، ولا تشارك بياناتك المالية أو ملفاتك الخاصة مع الآخرين.",
+                color = Color(0xFF65736A),
+                style = MaterialTheme.typography.bodySmall
             )
+
+            Spacer(modifier = Modifier.height(20.dp))
         }
     }
 
+    // تأكيد حذف الحركة
     if (deleteTransaction != null) {
         AlertDialog(
             onDismissRequest = { deleteTransaction = null },
             title = { Text("تأكيد الحذف") },
             text = {
-                Text("هل تريد حذف الحركة «${deleteTransaction?.title}»؟ لا يمكن التراجع عن هذا الإجراء.")
+                Text(
+                    "هل تريد حذف الحركة «${deleteTransaction?.title}»؟ " +
+                        "لا يمكن التراجع عن هذا الإجراء."
+                )
             },
             confirmButton = {
-                TextButton(onClick = {
-                    val target = deleteTransaction
-                    if (target != null) {
-                        val updated = transactions.toMutableList()
-                        val index = updated.indexOf(target)
-                        if (index >= 0) {
-                            updated.removeAt(index)
-                            persist(updated)
-                            message = "تم حذف الحركة."
+                TextButton(
+                    onClick = {
+                        val target = deleteTransaction
+
+                        if (target != null) {
+                            val updated = transactions.toMutableList()
+                            val index = updated.indexOf(target)
+
+                            if (index >= 0) {
+                                updated.removeAt(index)
+                                persist(updated)
+                                message = "تم حذف الحركة."
+                            }
                         }
+
+                        deleteTransaction = null
                     }
-                    deleteTransaction = null
-                }) {
+                ) {
                     Text("حذف")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { deleteTransaction = null }) {
+                TextButton(
+                    onClick = { deleteTransaction = null }
+                ) {
                     Text("إلغاء")
                 }
             }
